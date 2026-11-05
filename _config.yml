@@ -1,5 +1,6 @@
 title: Statistical checks of the 2026 Bulgarian presidential election
 author: Alexander Ignatov
+copyright: "2026"
 
 # Notebooks are committed with their outputs; CI only renders them.
 execute:
