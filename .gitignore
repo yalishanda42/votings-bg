@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+.env
+
+# Jupyter Book build output
+_build/
+
+# Raw machine-voting archives (large, not used by the notebooks yet)
+data/*/suemg/
+
+# Derived files, regenerate with `python load_data.py`
+votes_by_section*.csv
+
+# OS / editor / tooling
+.DS_Store
+.vscode/
+.idea/
+.deepeval/

@@ -1,0 +1,16 @@
+format: jb-book
+
+root: README
+
+parts:
+- caption: Round 1 (25 Oct 2026)
+  chapters:
+  - file: benford
+  - file: turnout_fingerprint
+  - file: ballot_anomalies
+
+- caption: Round 2 / runoff (1 Nov 2026)
+  chapters:
+  - file: benford_round2
+  - file: turnout_fingerprint_round2
+  - file: ballot_anomalies_round2
