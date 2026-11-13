@@ -3,6 +3,13 @@ format: jb-book
 root: README
 
 parts:
+- caption: Parliament (19 Apr 2026)
+  chapters:
+  - file: benford_parliament
+  - file: turnout_fingerprint_parliament
+  - file: ballot_anomalies_parliament
+  - file: double_voting_parliament
+
 - caption: Round 1 (25 Oct 2026)
   chapters:
   - file: benford

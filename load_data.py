@@ -1,4 +1,7 @@
-"""Load CIK section-level results for the 2026 presidential election.
+"""Load CIK section-level results for the 2026 Bulgarian elections.
+
+Supported: the presidential election (ROUND1, ROUND2) and the parliamentary election of 19 April 2026 (PARLIAMENT).
+For PARLIAMENT the "candidates" are parties/coalitions, labelled like '21 Прогресивна България'.
 
 Usage:
     from load_data import load_votes, load_sections, ROUND1, ROUND2
@@ -16,7 +19,17 @@ import pandas as pd
 
 ROUND1 = "2026-10-president-01"
 ROUND2 = "2026-11-president-02"
-ELECTIONS = {ROUND1: "25.10.2026", ROUND2: "01.11.2026"}   # folder -> file date suffix
+PARLIAMENT = "2026-04-parliament"
+ELECTIONS = {ROUND1: "25.10.2026", ROUND2: "01.11.2026", PARLIAMENT: "19.04.2026"}   # folder -> file date suffix
+
+# Short display names for the parties/coalitions in the 19.04.2026 parliamentary election (ballot number -> name)
+PARTY_SHORT = {
+    1: "ИТН", 2: "Пряка демокрация", 3: "Синя България", 4: "МЕЧ", 5: "БСП–ОЛ", 6: "Истината и само истината",
+    7: "ПП–ДБ", 8: "Възраждане", 9: "Моя България", 10: "Непартийни кандидати", 11: "АПС",
+    12: "Антикорупционен блок", 13: "Непокорна България", 14: "Величие", 15: "ГЕРБ–СДС", 16: "Трети март",
+    17: "ДПС", 18: "Нация", 19: "България може", 20: "Сияние", 21: "Прогресивна България", 22: "Съпротива",
+    23: "Зелените", 24: "Глас народен", 25: "ИК Тодор Батков (Смолян)",
+}
 
 def data_dir(election=ROUND1):
     return Path(__file__).parent / "data" / election / "Актуализирана база данни"
@@ -45,12 +58,37 @@ def load_candidates(election=ROUND1):
     return c.set_index("num")
 
 
+def party_label(num):
+    return f"{num:02d} {PARTY_SHORT.get(num, str(num))}"
+
+
+def _load_votes_parliament(kind):
+    # votes.txt rows: form; section; admin id; then blocks of (party; total; paper; machine).
+    # Rows have different lengths (МИР 22 Смолян has a 25th ballot entry), so parse line by line.
+    off = {"total": 1, "paper": 2, "machine": 3}[kind]
+    rows = {}
+    for line in _f("votes", PARLIAMENT).read_text(encoding="utf-8").splitlines():
+        f = line.split(";")
+        if len(f) < 3:
+            continue
+        rows[f[1]] = {party_label(int(f[i])): int(f[i + off] or 0) for i in range(3, len(f) - 3, 4)}
+    votes = pd.DataFrame.from_dict(rows, orient="index").fillna(0).astype(int)
+    votes = votes[sorted(votes.columns)]
+    votes.index.name = "section"
+    return votes
+
+
 def load_votes(kind="total", include_none=True, election=ROUND1):
-    """DataFrame indexed by section code, one column per candidate with absolute votes.
+    """DataFrame indexed by section code, one column per candidate (party for PARLIAMENT) with absolute votes.
 
     kind: 'total' | 'paper' | 'machine'
     include_none: append a 'Не подкрепям никого' column (from protocols.txt).
     """
+    if election == PARLIAMENT:
+        votes = _load_votes_parliament(kind)
+        if include_none:
+            votes["Не подкрепям никого"] = load_protocol_totals(election)[f"none_{kind}"].reindex(votes.index).fillna(0).astype(int)
+        return votes
     off = _KIND_OFFSET[kind]
     raw = pd.read_csv(_f("votes", election), sep=";", header=None, dtype=str)
     labels = load_candidates(election)["label"]
@@ -68,8 +106,37 @@ def load_votes(kind="total", include_none=True, election=ROUND1):
     return votes
 
 
+def _load_protocol_totals_parliament():
+    # One protocol per section. Forms 24/28 = paper only, 26/30 = paper + machine (items 11-14 / 10-13).
+    p = pd.read_csv(_f("protocols", PARLIAMENT), sep=";", header=None, dtype=str, names=range(1, 23))
+    num = lambda col: pd.to_numeric(p[col], errors="coerce").fillna(0).astype(int)
+    out = pd.DataFrame({
+        "section": p[2],
+        "form": num(1),
+        "ballots_received": num(7),
+        "voters_list": num(8),
+        "voters_added": num(9),
+        "voted_signatures": num(10),
+        "unused_paper": num(11),
+        "destroyed_paper": num(12),
+        "paper_in_box": num(13),
+        "invalid_paper": num(14),
+        "none_paper": num(15),
+        "valid_cand_paper": num(16),
+        "machine_in_box": num(17),
+        "none_machine": num(18),
+        "valid_cand_machine": num(19),
+    }).set_index("section")
+    assert out.index.is_unique, "expected exactly one protocol per section"
+    out["none_total"] = out["none_paper"] + out["none_machine"]
+    out["valid_cand_total"] = out["valid_cand_paper"] + out["valid_cand_machine"]
+    return out
+
+
 def load_protocol_totals(election=ROUND1):
     """Per-section aggregates from protocols.txt (sum of paper + machine protocols)."""
+    if election == PARLIAMENT:
+        return _load_protocol_totals_parliament()
     p = pd.read_csv(_f("protocols", election), sep=";", header=None, dtype=str,
                     names=range(1, 29))
     num = lambda col: pd.to_numeric(p[col], errors="coerce").fillna(0).astype(int)
@@ -93,6 +160,38 @@ def load_protocol_totals(election=ROUND1):
     agg["none_total"] = agg["none_paper"] + agg["none_machine"]
     agg["valid_cand_total"] = agg["valid_cand_paper"] + agg["valid_cand_machine"]
     return agg
+
+
+def load_machine_counts(election=PARLIAMENT):
+    """Electronic per-party totals recorded by each voting machine (suemg/ archives), indexed by section.
+
+    Columns use the same labels as load_votes(); code 99 in the archive = 'Не подкрепям никого'.
+    The archives are large and not in the repository; the parsed totals are cached in
+    data/<election>/machine_totals_<date>.csv, which is used when the archives are absent.
+    """
+    import zipfile
+    root = Path(__file__).parent / "data" / election
+    cache = root / f"machine_totals_{ELECTIONS[election]}.csv"
+    zips = sorted((root / "suemg").glob("*/*.zip"))
+    if not zips:
+        return pd.read_csv(cache, dtype={"section": str}).set_index("section")
+    rows = {}
+    for z in zips:
+        with zipfile.ZipFile(z) as zf:
+            for name in (n for n in zf.namelist() if n.endswith(".csv")):
+                lines = zf.read(name).decode("utf-8").splitlines()
+                tot = {}
+                for line in lines[1:]:          # section; election code; party; party total; candidate; preferences
+                    f = line.split(";")
+                    if len(f) >= 6:
+                        tot[int(f[2])] = int(f[3])
+                rows[lines[0].split(";")[0]] = tot
+    m = pd.DataFrame.from_dict(rows, orient="index").fillna(0).astype(int)
+    m.columns = ["Не подкрепям никого" if c == 99 else party_label(c) for c in m.columns]
+    m = m[sorted(c for c in m.columns if c != "Не подкрепям никого") + ["Не подкрепям никого"]]
+    m.index.name = "section"
+    m.to_csv(cache)
+    return m
 
 
 def load_sections(election=ROUND1):
@@ -121,7 +220,8 @@ def load_sections(election=ROUND1):
 
 
 if __name__ == "__main__":
-    for election, out_name in [(ROUND1, "votes_by_section.csv"), (ROUND2, "votes_by_section_round2.csv")]:
+    for election, out_name in [(ROUND1, "votes_by_section.csv"), (ROUND2, "votes_by_section_round2.csv"),
+                               (PARLIAMENT, "votes_by_section_parliament.csv")]:
         v = load_votes(election=election)
         pt = load_protocol_totals(election)
         cand = v.drop(columns="Не подкрепям никого").sum(axis=1)

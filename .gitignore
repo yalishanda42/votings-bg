@@ -20,3 +20,6 @@ votes_by_section*.csv
 .vscode/
 .idea/
 .deepeval/
+
+# Preference votes (78 MB, not used by the notebooks)
+data/*/Актуализирана база данни/preferences_*.txt
